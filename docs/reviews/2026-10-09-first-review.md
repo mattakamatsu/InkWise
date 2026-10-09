@@ -29,7 +29,7 @@ but three, listed under "Watch on the first device run".
 | `npm ci && npm run build && npm run typecheck` | clean |
 | `npm test` (core, CLI, plugin services) | 254 pass after the changes below (205 before) |
 | Plugin `tsc --noEmit` and Metro bundle | clean, 1.4 MB bundle |
-| `.snplg` (needs JDK 21 + Android SDK 35) | not built locally; the fork's CI builds it |
+| `.snplg` (needs JDK 21 + Android SDK 35) | built locally with `packages/plugin/local-build.sh` (see `docs/LOCAL-BUILD.md`): 7.3 MB, `reactPackages` lists `com.rnfs.RNFSPackage` |
 | 8 real Reader articles through `buildEpub` + epubcheck | 7/8 valid before the table fix, 8/8 after |
 | Highlights lifted from those articles, marked with `markEpub` | found in every article (3/3 each) |
 | Reader's tag filter, "Evidence" vs "evidence" | case-sensitive, wants the lowercase key |
