@@ -121,7 +121,7 @@ export class ReadwiseClient {
       const params = new URLSearchParamsLite();
       if (opts.location) params.set('location', opts.location);
       if (opts.category) params.set('category', opts.category);
-      for (const tag of (opts.tags ?? []).slice(0, 5)) params.append('tag', tag);
+      for (const tag of tagKeys(opts.tags)) params.append('tag', tag);
       if (opts.updatedAfter) params.set('updatedAfter', opts.updatedAfter);
       if (opts.withHtmlContent) params.set('withHtmlContent', 'true');
       params.set('limit', String(pageSize));
@@ -279,6 +279,18 @@ export class ReadwiseClient {
       throw new ReadwiseError(errorMessage(method, path, res.status), res.status, text);
     }
   }
+}
+
+/**
+ * Reader filters by a tag's key, which is its name in lowercase ("Evidence" is
+ * stored as "evidence"), and the filter is case-sensitive: asking for the
+ * display name finds nothing (checked against the live API, 2026-10-09).
+ */
+export function tagKeys(tags: readonly string[] | undefined): string[] {
+  return (tags ?? [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 5);
 }
 
 function errorMessage(method: string, path: string, status: number): string {

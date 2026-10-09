@@ -70,15 +70,33 @@ describe('cleanHtml', () => {
     expect(cleanHtml('<ul><li>a</li><ul><li>b</li></ul></ul>').xhtml).toBe('<ul><li>a</li><li><ul><li>b</li></ul></li></ul>');
     expect(cleanHtml('<ul>loose<li>x</li></ul>').xhtml).toBe('<ul><li>loose</li><li>x</li></ul>');
     expect(cleanHtml('<table>stray<td>c</td><tr><td>r</td></tr></table>').xhtml).toBe(
-      '<table><tr><td>stray</td><td>c</td></tr><tr><td>r</td></tr></table>',
+      '<table><tbody><tr><td>stray</td><td>c</td></tr><tr><td>r</td></tr></tbody></table>',
     );
     expect(cleanHtml('<dl><dt>t</dt>loose<dd>d</dd></dl>').xhtml).toBe('<dl><dt>t</dt><dd>loose</dd><dd>d</dd></dl>');
     expect(cleanHtml('<dd>x</dd><figcaption>y</figcaption>').xhtml).toBe('<p>x</p><p>y</p>');
   });
 
+  // Seen in a real Reader article (2026-10-09): a header row written as a bare
+  // <tr>, then the body in a <tbody>. XHTML allows rows or sections, never both.
+  it('always puts table rows in a section, so bare rows and sections can mix', () => {
+    expect(cleanHtml('<table><tr><th>Op</th></tr><tbody><tr><td>cheap</td></tr></tbody></table>').xhtml).toBe(
+      '<table><tbody><tr><th>Op</th></tr></tbody><tbody><tr><td>cheap</td></tr></tbody></table>',
+    );
+    // A header after body rows and any footer become plain sections: XHTML
+    // wants thead first and tfoot last, and the reader shows them the same.
+    expect(
+      cleanHtml('<table><thead><tr><th>h</th></tr></thead><tr><td>a</td></tr><thead><tr><th>late</th></tr></thead><tfoot><tr><td>f</td></tr></tfoot></table>').xhtml,
+    ).toBe(
+      '<table><thead><tr><th>h</th></tr></thead><tbody><tr><td>a</td></tr></tbody><tbody><tr><th>late</th></tr></tbody><tbody><tr><td>f</td></tr></tbody></table>',
+    );
+    expect(cleanHtml('<table><caption>c</caption><tr><td>a</td></tr></table>').xhtml).toBe(
+      '<table><caption>c</caption><tbody><tr><td>a</td></tr></tbody></table>',
+    );
+  });
+
   it('drops attribute values epubcheck rejects', () => {
     expect(cleanHtml('<table><tr><td colspan="0" rowspan="-1">x</td><th scope="up">y</th></tr></table>').xhtml).toBe(
-      '<table><tr><td>x</td><th>y</th></tr></table>',
+      '<table><tbody><tr><td>x</td><th>y</th></tr></tbody></table>',
     );
     expect(cleanHtml('<ol type="z"><li>q</li></ol>').xhtml).toBe('<ol><li>q</li></ol>');
     expect(cleanHtml('<time datetime="nope">then</time>').xhtml).toBe('then');

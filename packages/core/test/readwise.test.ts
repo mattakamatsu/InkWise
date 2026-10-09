@@ -41,12 +41,14 @@ describe('ReadwiseClient', () => {
     expect((await client.listDocuments({ limit: 2 })).length).toBe(2);
   });
 
-  it('passes tags as repeated params, max 5', async () => {
+  it('passes tags as repeated params, max 5, as lowercase keys', async () => {
     const { fake, client } = setup();
-    await client.listDocuments({ tags: ['a', 'b c', 'd', 'e', 'f', 'g'] });
+    await client.listDocuments({ tags: ['a', 'B c ', ' ', 'd', 'e', 'f', 'g'] });
     const url = fake.requests[0]!.url;
     expect(url.match(/tag=/g)!.length).toBe(5);
+    // Reader's filter wants the tag key ("b c"), not the display name ("B c").
     expect(url).toContain('tag=b%20c');
+    expect(url).not.toContain('tag=B');
   });
 
   it('waits for Retry-After on 429 and retries', async () => {

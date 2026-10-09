@@ -61,7 +61,9 @@ const STRICT_CHILDREN: Record<string, { allowed: Set<string>; wrap: string }> = 
   ul: { allowed: new Set(['li']), wrap: 'li' },
   ol: { allowed: new Set(['li']), wrap: 'li' },
   dl: { allowed: new Set(['dt', 'dd']), wrap: 'dd' },
-  table: { allowed: new Set(['caption', 'thead', 'tbody', 'tfoot', 'tr']), wrap: 'tr' },
+  // XHTML lets a table hold either bare rows or sections, never both, so every
+  // row goes in a section (what a browser does) and the two can't collide.
+  table: { allowed: new Set(['caption', 'thead', 'tbody', 'tfoot']), wrap: 'tbody' },
   thead: { allowed: new Set(['tr']), wrap: 'tr' },
   tbody: { allowed: new Set(['tr']), wrap: 'tr' },
   tfoot: { allowed: new Set(['tr']), wrap: 'tr' },
@@ -91,8 +93,12 @@ export interface CleanResult {
 
 export function cleanHtml(html: string, opts: CleanOptions = {}): CleanResult {
   const out: string[] = [];
-  /** Every open source element; `tag` is what we emitted for it, or null if it was unwrapped. */
-  const open: { name: string; tag: string | null }[] = [];
+  /**
+   * Every open source element; `tag` is what we emitted for it, or null if it
+   * was unwrapped. A table remembers whether a body section has started, since
+   * a header section after that point has to become a body too.
+   */
+  const open: { name: string; tag: string | null; hasBody?: boolean }[] = [];
   const imageUrls: string[] = [];
   const seenImages = new Set<string>();
   let dropDepth = 0;
@@ -119,6 +125,19 @@ export function cleanHtml(html: string, opts: CleanOptions = {}): CleanResult {
     return undefined;
   };
 
+  /** The innermost open table, if any. */
+  const currentTable = () => {
+    for (let i = open.length - 1; i >= 0; i--) if (open[i]!.tag === 'table') return open[i]!;
+    return undefined;
+  };
+
+  /** Record that a body section was emitted (explicitly or as a wrapper) in the current table. */
+  const noteBody = (tag: string) => {
+    if (tag !== 'tbody') return;
+    const table = currentTable();
+    if (table) table.hasBody = true;
+  };
+
   /**
    * Make room for `child` (a tag, or '#text'): close an implicit wrapper that a
    * real child replaces, and open one when the parent wouldn't accept `child`.
@@ -136,12 +155,13 @@ export function cleanHtml(html: string, opts: CleanOptions = {}): CleanResult {
       }
       if (e.name !== IMPLICIT) break;
     }
-    // Then open whatever wrappers the parent needs (at most tr then td).
+    // Then open whatever wrappers the parent needs (at most tbody, tr, then td).
     for (let guard = 0; guard < 3; guard++) {
       const tag = innermost()?.tag;
       const rule = tag ? STRICT_CHILDREN[tag] : undefined;
       if (!rule || rule.allowed.has(child)) return;
       out.push(`<${rule.wrap}>`);
+      noteBody(rule.wrap);
       open.push({ name: IMPLICIT, tag: rule.wrap });
     }
   };
@@ -190,9 +210,15 @@ export function cleanHtml(html: string, opts: CleanOptions = {}): CleanResult {
           tag = insideEmitted('table') ? null : 'p';
         }
         if ((tag === 'td' || tag === 'th' || tag === 'tr' || tag === 'thead' || tag === 'tbody' || tag === 'tfoot') && !insideEmitted('table')) tag = null;
+        // XHTML wants one thead first and one tfoot last. A footer, or a header
+        // once rows have started, reads the same as a body section.
+        if (tag === 'tfoot' || (tag === 'thead' && currentTable()?.hasBody)) tag = 'tbody';
         if ((tag === 'header' || tag === 'footer') && (insideEmitted('header') || insideEmitted('footer'))) tag = 'div';
         if (tag) fitInto(tag);
-        if (tag) out.push(`<${tag}${renderAttrs(tag, attribs)}>`);
+        if (tag) {
+          out.push(`<${tag}${renderAttrs(tag, attribs)}>`);
+          noteBody(tag);
+        }
         open.push({ name, tag });
       },
       ontext(text) {
