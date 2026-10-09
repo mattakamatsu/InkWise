@@ -23,7 +23,7 @@ The plugin doesn't try to be a reader. Reading happens in the Supernote's built-
 3. On the device: **Settings → Apps → Plugins → Add Plugin**, pick Inkwise.
 4. Open Inkwise's settings from the plugin list and add your Readwise token. Either paste it (from [readwise.io/access_token](https://readwise.io/access_token)) or save it as `MyStyle/Inkwise/token.txt` and tap **Import token file**. Inkwise leaves the file where it is, so after a reinstall it reads the token from there by itself.
 
-You need firmware with the plugin beta (Chauvet 3.29.4x on Manta and Nomad).
+You need firmware with the plugin beta (Chauvet 3.29.44_beta or later on Manta and Nomad; 3.29.43_beta introduced plugins and was withdrawn).
 
 ### Update
 

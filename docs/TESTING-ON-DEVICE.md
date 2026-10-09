@@ -37,6 +37,8 @@ inkwise sync --target folder --out ./out --limit 5
 
 ## Part 2: install the plugin
 
+You need the plugin beta firmware. 3.29.43_beta (26 Aug 2026) introduced plugins and was then withdrawn; 3.29.44_beta (2 Sep 2026) replaced it. Settings → About shows which you have.
+
 1. Get `Inkwise-0.2.N.snplg` from the latest green CI run: **Actions → CI → newest run → Artifacts → Inkwise-snplg-0.2.N**. It downloads as a zip; the `.snplg` is inside. Each build has its own version number, which the plugin list and the bottom of Inkwise settings both show, so you can tell which build is installed.
 2. Copy it into `MyStyle/` on the Manta.
 3. **Settings → Apps → Plugins → Add Plugin**, then choose Inkwise.
@@ -46,7 +48,7 @@ inkwise sync --target folder --out ./out --limit 5
   - **Sync Reader** in the sidebar (in NOTE and DOC)
   - **Done** in the DOC sidebar
   - **Send highlight** in the DOC text-selection toolbar
-- [ ] **2.3** Upgrade: copy a newer build into `MyStyle/` and pick it from **Add Plugin** without uninstalling. The version at the bottom of Inkwise settings changes, and the token, settings and permissions are all still there.
+- [ ] **2.3** Upgrade: copy a newer build into `MyStyle/` and pick it from **Add Plugin** without uninstalling. The version at the bottom of Inkwise settings changes, and the token, settings and permissions are all still there. Other plugin authors report that upgrading a plugin with native code in place can crash the host once, with "not compatible with the current system version" on the next tap; tapping again has worked. If it keeps failing, uninstall and reinstall (2.4).
 - [ ] **2.4** If an upgrade won't install, uninstall and reinstall, then tap **Sync Reader**. After the permission prompts it syncs without asking for the token again, and your settings are back.
 
 ## Part 3: plugin checks
@@ -96,7 +98,8 @@ These are the open questions only a device can answer. If any of them goes wrong
 | Is the handwriting file really `<name>.epub.mark` next to the EPUB? | Done, then sync | Handwriting missing after the article moves to Archive. |
 | Does `reloadFile()` show a rewritten EPUB straight away, and do handwritten marks survive it? | Marking highlights | No mark until the article is closed and reopened, or handwriting that moves. Marking can be turned off in settings. |
 | Which highlight styles does the DOC reader draw? | Marking highlights | Answered on a Manta with the plugin beta (2026-10-08): bold, grey text, and a background or border on a whole paragraph. No underlines, and no background behind words. The reader also skips a rule written for a bare class (`.rw-hl-block`) and draws only rules that name the element too (`p.rw-hl-block`), so Inkwise writes one rule per element. A second test (2026-10-09) found that inline-block lays out as a block, so a box behind the words lands on its own line, while a combining low line (U+0332) draws a real underline that wraps with the text. That underline is the default. To check another device, run `node scripts/make-highlight-test-epub.mjs` and `node scripts/make-word-mark-test-epub.mjs` and note which numbered lines look marked. |
-| Does Reader's tag filter want the tag's display name or its lowercase key? | Sync with a tag set | A tag filter that finds nothing. Try the tag in lowercase. |
+| Does Reader's tag filter want the tag's display name or its lowercase key? | Sync with a tag set | Answered against the live API (2026-10-09): the lowercase key, and the filter is case-sensitive ("Evidence" found nothing, "evidence" found the document). Inkwise now lowercases the tag before asking. |
+| Does `react-native-fs` get loaded by PluginHost at all? | Everything that touches files | No plugin on current firmware ships it. Since 2026-10-09 a failure to load shows as an error on the Sync screen instead of leaving the buttons dead; CI also checks that `com.rnfs.RNFSPackage` is in the package's `reactPackages`. |
 
 ## If something breaks
 
