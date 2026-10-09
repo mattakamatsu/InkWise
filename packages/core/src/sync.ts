@@ -5,7 +5,7 @@ import { extractImageUrls } from './html.js';
 import { addDocHighlight, highlightsKey, updateManifest, withManifestLock, type Manifest, type ManifestDocument, type ManifestStore } from './manifest.js';
 import type { HighlightStyle } from './markStyle.js';
 import type { OutputAdapter } from './output.js';
-import { NetworkError, ReadwiseClient, ReadwiseError } from './readwise.js';
+import { NetworkError, ReadwiseClient, ReadwiseError, type ListOptions } from './readwise.js';
 import { READABLE_CATEGORIES, type FetchLike, type ReaderDocument } from './types.js';
 
 export interface SyncOptions {
@@ -54,6 +54,14 @@ export interface SyncItemResult {
   error?: string;
 }
 
+/**
+ * Up to this many articles are fetched with one request each. Beyond it, one
+ * listing with HTML costs fewer requests (Reader allows 20 a minute).
+ */
+export const SINGLE_FETCH_MAX = 8;
+/** Reader's clock and the device's can disagree; ask for changes a little before the last sync. */
+const UPDATED_AFTER_OVERLAP_MS = 60 * 60 * 1000;
+
 export interface SyncResult {
   added: number;
   updated: number;
@@ -98,10 +106,18 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
   const wanted: readonly string[] | null = opts.category === undefined ? READABLE_CATEGORIES : opts.category === null ? null : [opts.category].flat();
   /** Documents left out because of their category, counted so the user knows they exist. */
   const leftOut = new Map<string, number>();
-  const docs = await deps.client.listDocuments({
+  /** The queue's filter, shared by the listing and the content fetch below. */
+  const listing = {
     location: opts.location ?? 'later',
     // Reader filters one category itself; for several, ask for all and filter here.
     category: wanted?.length === 1 ? wanted[0] : undefined,
+    tags: opts.tags,
+  };
+  // Article HTML is most of a Reader response and is parsed whole in memory, so
+  // the queue is listed without it; only documents that will be written are
+  // fetched in full, later.
+  const docs = await deps.client.listDocuments({
+    ...listing,
     accept:
       wanted && wanted.length > 1
         ? (d) => {
@@ -110,8 +126,7 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
             return false;
           }
         : undefined,
-    tags: opts.tags,
-    withHtmlContent: true,
+    withHtmlContent: false,
     limit: opts.limit,
   });
   if (leftOut.size) {
@@ -134,14 +149,15 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
 
   const items: SyncItemResult[] = [];
   let written = 0;
-  const toWrite = docs.filter((d) => needsWrite(d, manifest, existingById, opts.force, showHighlights, opts.highlightStyle));
+  const toWrite = new Set(docs.filter((d) => needsWrite(d, manifest, existingById, opts.force, showHighlights, opts.highlightStyle)));
+  const load = contentLoader(deps.client, [...toWrite], manifest.lastSyncAt, listing, say);
   for (const doc of docs) {
     const title = doc.title?.trim() || 'Untitled';
     const filename = epubFilename(doc);
     const entry = manifest.documents[doc.id];
     const onDisk = existingById.get(doc.id);
 
-    if (!toWrite.includes(doc)) {
+    if (!toWrite.has(doc)) {
       if (!entry && onDisk) {
         // Written by the other Inkwise (CLI vs plugin). Track it, don't duplicate it.
         await setDoc(doc.id, {
@@ -162,11 +178,22 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
     }
 
     written++;
-    say(`Writing ${written}/${toWrite.length}: ${title}`);
+    const isUpdate = !!onDisk || !!entry;
+    if (opts.dryRun) {
+      // Nothing is written, so nothing is fetched either.
+      items.push({ id: doc.id, title, filename, action: isUpdate ? 'updated' : 'added' });
+      continue;
+    }
+    say(`Writing ${written}/${toWrite.size}: ${title}`);
     try {
+      const full = await load(doc);
+      if (!full) {
+        items.push({ id: doc.id, title, filename, action: 'failed', error: 'Reader no longer has this document.' });
+        continue;
+      }
       let images;
-      if (includeImages && deps.fetchImages && doc.html_content) {
-        const urls = extractImageUrls(doc.html_content, doc.source_url || doc.url);
+      if (includeImages && deps.fetchImages && full.html_content) {
+        const urls = extractImageUrls(full.html_content, full.source_url || full.url);
         if (urls.length) {
           images = await collectImages(urls, {
             fetch: deps.fetchImages,
@@ -177,26 +204,23 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
         }
       }
       const highlights = showHighlights ? manifest.docHighlights[doc.id] : undefined;
-      const epub = buildEpub(doc, { images, includeImages, modified: now(), highlights, highlightStyle: opts.highlightStyle });
-      const isUpdate = !!onDisk || !!entry;
-      if (!opts.dryRun) {
-        await deps.output.put(epub.filename, epub.bytes);
-        // The title changed, so the filename did too: drop the stale copy.
-        if (onDisk && onDisk !== epub.filename && existingNames.has(onDisk) && deps.output.remove) {
-          await deps.output.remove(onDisk);
-        }
-        await setDoc(doc.id, {
-          title,
-          filename: epub.filename,
-          updatedAt: doc.updated_at,
-          status: 'synced',
-          url: doc.url,
-          author: doc.author,
-          sourceUrl: doc.source_url,
-          syncedAt: now().toISOString(),
-          marked: highlightsKey(highlights, opts.highlightStyle),
-        });
+      const epub = buildEpub(full, { images, includeImages, modified: now(), highlights, highlightStyle: opts.highlightStyle });
+      await deps.output.put(epub.filename, epub.bytes);
+      // The title changed, so the filename did too: drop the stale copy.
+      if (onDisk && onDisk !== epub.filename && existingNames.has(onDisk) && deps.output.remove) {
+        await deps.output.remove(onDisk);
       }
+      await setDoc(doc.id, {
+        title,
+        filename: epub.filename,
+        updatedAt: full.updated_at,
+        status: 'synced',
+        url: full.url,
+        author: full.author,
+        sourceUrl: full.source_url,
+        syncedAt: now().toISOString(),
+        marked: highlightsKey(highlights, opts.highlightStyle),
+      });
       items.push({ id: doc.id, title, filename: epub.filename, action: isUpdate ? 'updated' : 'added' });
     } catch (err) {
       if (err instanceof NetworkError) throw err;
@@ -256,6 +280,44 @@ export async function syncReader(deps: SyncDeps, opts: SyncOptions = {}): Promis
   };
   result.summary = summarize(result, !!opts.dryRun);
   return result;
+}
+
+/**
+ * Fetches the full document (with `html_content`) for each of `docs`, which
+ * came from a listing without it. A few are fetched one at a time; many come
+ * from one listing with HTML, limited to what changed since the last sync so
+ * the response stays small, with anything that listing missed fetched singly.
+ * Returns null when Reader no longer has the document.
+ */
+function contentLoader(
+  client: ReadwiseClient,
+  docs: ReaderDocument[],
+  lastSyncAt: string | null,
+  listing: Pick<ListOptions, 'location' | 'category' | 'tags'>,
+  say: (m: string) => void,
+): (doc: ReaderDocument) => Promise<ReaderDocument | null> {
+  const ids = new Set(docs.map((d) => d.id));
+  let batch: Promise<Map<string, ReaderDocument>> | null = null;
+  const fetchBatch = () =>
+    (batch ??= (async () => {
+      say(`Fetching ${docs.length} articles…`);
+      const since = lastSyncAt ? Date.parse(lastSyncAt) - UPDATED_AFTER_OVERLAP_MS : NaN;
+      const found = await client.listDocuments({
+        ...listing,
+        withHtmlContent: true,
+        updatedAfter: Number.isFinite(since) ? new Date(since).toISOString() : undefined,
+        accept: (d) => ids.has(d.id),
+        limit: docs.length,
+      });
+      return new Map(found.map((d) => [d.id, d]));
+    })());
+  return async (doc) => {
+    if (docs.length > SINGLE_FETCH_MAX) {
+      const hit = (await fetchBatch()).get(doc.id);
+      if (hit) return hit;
+    }
+    return client.getDocument(doc.id, true);
+  };
 }
 
 function needsWrite(

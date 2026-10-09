@@ -49,6 +49,8 @@ export class FakeReadwise {
   retryAfterSeconds = 1;
   /** Force a status for the next request to a path prefix, e.g. { '/api/v3/save/': 500 }. */
   failNext: Record<string, number> = {};
+  /** Documents that show up in listings but are gone when fetched by id (deleted mid-sync). */
+  vanishOnFetch = new Set<string>();
   private nextId = 1;
   /** Timestamp source for highlights; tests can pin it. */
   clock: () => string = () => new Date().toISOString();
@@ -141,7 +143,7 @@ export class FakeReadwise {
     })) as ReaderDocument[];
     let docs = [...this.documents, ...hl];
     const id = q.id?.[0];
-    if (id) docs = docs.filter((d) => d.id === id);
+    if (id) docs = this.vanishOnFetch.has(id) ? [] : docs.filter((d) => d.id === id);
     const location = q.location?.[0];
     if (location) docs = docs.filter((d) => d.location === location);
     const category = q.category?.[0];

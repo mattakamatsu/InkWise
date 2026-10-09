@@ -156,6 +156,86 @@ describe('syncReader', () => {
     expect(third.updated).toBe(1);
   });
 
+  // Article HTML is the heavy part of a Reader response, and on the tablet the
+  // whole page is parsed in memory. The queue is listed without it, and only the
+  // documents that will be written are fetched in full.
+  describe('fetching article content', () => {
+    const listRequests = (fake: FakeReadwise) => fake.requests.filter((q) => q.method === 'GET' && q.url.includes('/api/v3/list/'));
+    const withHtml = (q: { url: string }) => q.url.includes('withHtmlContent=true');
+    const byId = (q: { url: string }) => /[?&]id=/.test(q.url);
+
+    it('lists the queue without HTML and fetches a few new articles one by one', async () => {
+      const { fake, deps } = setup();
+      await syncReader(deps);
+      const lists = listRequests(fake);
+      expect(lists.filter((q) => !withHtml(q) && !byId(q) && !q.url.includes('category=highlight'))).toHaveLength(1);
+      expect(lists.filter((q) => withHtml(q) && !byId(q))).toHaveLength(0);
+      expect(lists.filter((q) => withHtml(q) && byId(q))).toHaveLength(4);
+
+      // Nothing changed: no article content is fetched at all.
+      fake.requests.length = 0;
+      await syncReader(deps);
+      expect(listRequests(fake).filter(withHtml)).toHaveLength(0);
+
+      // One article changed: exactly that one is fetched.
+      fake.requests.length = 0;
+      fake.documents[1]!.updated_at = '2026-10-09T00:00:00+00:00';
+      const r = await syncReader(deps);
+      expect(r.updated).toBe(1);
+      const fetched = listRequests(fake).filter(withHtml);
+      expect(fetched).toHaveLength(1);
+      expect(fetched[0]!.url).toContain(`id=${fake.documents[1]!.id}`);
+    });
+
+    it('fetches many new articles in one listing instead of one request each', async () => {
+      const { fake, deps } = setup();
+      const base = fake.documents[0]!;
+      for (let i = 0; i < 12; i++) fake.documents.push({ ...base, id: `01many${String(i).padStart(2, '0')}abcdefghijklm`, title: `Many ${i}` });
+      const r = await syncReader(deps);
+      expect(r.added).toBe(16);
+      const lists = listRequests(fake);
+      expect(lists.filter((q) => withHtml(q) && byId(q))).toHaveLength(0);
+      expect(lists.filter((q) => withHtml(q) && !byId(q)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('asks only for articles changed since the last sync, then fetches any stragglers singly', async () => {
+      const { fake, manifest, deps } = setup();
+      await syncReader(deps);
+      // A reinstall or a wiped folder: everything must be written again, but the
+      // manifest still knows when the last sync was.
+      const base = fake.documents[0]!;
+      for (let i = 0; i < 12; i++) {
+        fake.documents.push({ ...base, id: `01stale${String(i).padStart(2, '0')}abcdefghijkl`, title: `Stale ${i}`, updated_at: '2026-09-01T00:00:00+00:00' });
+      }
+      fake.requests.length = 0;
+      const r = await syncReader({ ...deps, now: () => new Date('2026-10-08T06:00:00Z') });
+      expect(r.added).toBe(12);
+      const batch = listRequests(fake).filter((q) => withHtml(q) && !byId(q));
+      expect(batch).toHaveLength(1);
+      expect(batch[0]!.url).toContain('updatedAfter=');
+      // The batch found none of them (they predate the last sync), so each was fetched by id.
+      expect(listRequests(fake).filter((q) => withHtml(q) && byId(q))).toHaveLength(12);
+      expect(manifest.manifest.lastSyncAt).toBe('2026-10-08T06:00:00.000Z');
+    });
+
+    it('fetches no content on a dry run', async () => {
+      const { fake, deps } = setup();
+      const r = await syncReader(deps, { dryRun: true });
+      expect(r.summary).toBe('Would sync 4 new, 0 updated.');
+      expect(listRequests(fake).filter(withHtml)).toHaveLength(0);
+    });
+
+    it('reports an article whose content could not be fetched, and keeps going', async () => {
+      const { fake, deps } = setup();
+      const gone = fake.documents[0]!;
+      fake.vanishOnFetch.add(gone.id);
+      const r = await syncReader(deps);
+      expect(r.added).toBe(3);
+      expect(r.failed).toBe(1);
+      expect(r.items.find((i) => i.id === gone.id)).toMatchObject({ action: 'failed' });
+    });
+  });
+
   it('replaces the old file when a title changes', async () => {
     const { fake, output, deps } = setup();
     await syncReader(deps);
