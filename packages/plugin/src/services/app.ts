@@ -53,6 +53,13 @@ const PERMISSION_REASONS: Record<Permission, string> = {
   'plugin.permission.FILE:DELETE': 'Inkwise removes articles you archived (only if you turn that on).',
 };
 
+const PERMISSION_NAMES: Record<Permission, string> = {
+  'plugin.permission.INTERNET': 'internet access',
+  'plugin.permission.FILE:READ': 'permission to read files',
+  'plugin.permission.FILE:WRITE': 'permission to write files',
+  'plugin.permission.FILE:DELETE': 'permission to delete files',
+};
+
 export type AfterArchive = 'keep' | 'move' | 'delete';
 
 export interface Settings {
@@ -305,8 +312,10 @@ export class InkwiseApp {
   async ensure(permission: Permission): Promise<void> {
     if (await this.host.hasPermission(permission)) return;
     if (await this.host.requestPermission(permission, PERMISSION_REASONS[permission])) return;
-    const what = permission.split('.').pop();
-    throw new PermissionError(`Inkwise needs the ${what} permission for this. You can allow it next time you try.`);
+    // After a refusal the Supernote doesn't show the dialog again; the user
+    // turns the permission on in the plugin's own settings on the device.
+    const what = PERMISSION_NAMES[permission];
+    throw new PermissionError(`Inkwise needs ${what} for this. Turn it on in the Supernote's plugin settings for Inkwise, then try again.`);
   }
 
   // ---- actions -----------------------------------------------------------

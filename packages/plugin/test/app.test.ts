@@ -162,7 +162,9 @@ describe('Sync Reader', () => {
     await connect();
     host.granted.delete('plugin.permission.FILE:WRITE');
     host.answer = false;
-    expect(await app.sync(() => {})).toContain('FILE:WRITE');
+    expect(await app.sync(() => {})).toBe(
+      "Inkwise needs permission to write files for this. Turn it on in the Supernote's plugin settings for Inkwise, then try again.",
+    );
   });
 
   it('honours settings: location, tag, max articles, folder name, images', async () => {

@@ -42,7 +42,11 @@ export const supernoteHost: Host = {
     return dir;
   },
   async hasPermission(p: Permission) {
-    return (await PluginManager.hasPermission(p)) === 1;
+    // The SDK's own types disagree on the answer: 0/1, or 0/1/2 with 2 for
+    // "always allow" (NativePluginManager.ts). Treating 2 as "not granted"
+    // would silently stop the log, backups and token re-import after the user
+    // chose Always allow. Hardware-tested plugins (sn-clipper) accept 1 or 2.
+    return Number(await PluginManager.hasPermission(p)) >= 1;
   },
   async requestPermission(p: Permission, description: string) {
     const r = await PluginManager.requestPermission(p, description);
